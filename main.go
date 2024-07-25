@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"flag"
 	"fmt"
 	"os"
 	"os/exec"
@@ -239,34 +240,131 @@ func measureTime(start time.Time, name string) {
 	fmt.Printf("%s took %s\n", name, elapsed)
 }
 
+func getDetailedMemoryInfo(deviceID string) string {
+	timeout := 5 * time.Second
+	meminfo := runAdbCommand(deviceID, "cat /proc/meminfo", timeout)
+	lines := strings.Split(meminfo, "\n")
+
+	var output strings.Builder
+	color.New(color.FgCyan, color.Bold).Fprintln(&output, "Detailed Memory Information")
+	output.WriteString(strings.Repeat("=", 30) + "\n\n")
+
+	formatSize := func(kb int) string {
+		if kb > 1048576 {
+			return fmt.Sprintf("%.2f GB", float64(kb)/1048576)
+		} else if kb > 1024 {
+			return fmt.Sprintf("%.2f MB", float64(kb)/1024)
+		}
+		return fmt.Sprintf("%d KB", kb)
+	}
+
+	memData := make(map[string]int)
+	for _, line := range lines {
+		parts := strings.Fields(line)
+		if len(parts) >= 2 {
+			key := strings.TrimSuffix(parts[0], ":")
+			value, _ := strconv.Atoi(parts[1])
+			memData[key] = value
+		}
+	}
+
+	highlightedFields := []struct {
+		key         string
+		description string
+	}{
+		{"MemTotal", "Total RAM"},
+		{"MemAvailable", "Available RAM"},
+		{"MemFree", "Free RAM"},
+		{"SwapTotal", "Total Swap"},
+		{"SwapFree", "Free Swap"},
+	}
+
+	for _, field := range highlightedFields {
+		if value, ok := memData[field.key]; ok {
+			color.New(color.FgYellow, color.Bold).Fprintf(&output, "%-20s : ", field.description)
+			color.New(color.FgWhite).Fprintln(&output, formatSize(value))
+		}
+	}
+
+	output.WriteString("\n")
+
+	// Calculate and display used memory
+	usedMem := memData["MemTotal"] - memData["MemAvailable"]
+	color.New(color.FgRed, color.Bold).Fprintf(&output, "%-20s : ", "Used RAM")
+	color.New(color.FgWhite).Fprintln(&output, formatSize(usedMem))
+
+	// Calculate and display used swap
+	usedSwap := memData["SwapTotal"] - memData["SwapFree"]
+	color.New(color.FgMagenta, color.Bold).Fprintf(&output, "%-20s : ", "Used Swap")
+	color.New(color.FgWhite).Fprintln(&output, formatSize(usedSwap))
+
+	output.WriteString("\nOther Memory Information:\n")
+	output.WriteString(strings.Repeat("-", 25) + "\n")
+	for _, line := range lines {
+		parts := strings.Fields(line)
+		if len(parts) >= 2 {
+			key := strings.TrimSuffix(parts[0], ":")
+			if !contains(highlightedFields, key) && key != "SwapFree" {
+				value, err := strconv.Atoi(parts[1])
+				if err == nil {
+					color.New(color.FgGreen).Fprintf(&output, "%-20s : ", key)
+					color.New(color.FgWhite).Fprintln(&output, formatSize(value))
+				}
+			}
+		}
+	}
+
+	return output.String()
+}
+
+func contains(fields []struct{ key, description string }, key string) bool {
+	for _, field := range fields {
+		if field.key == key {
+			return true
+		}
+	}
+	return false
+}
+
 func main() {
-	totalStart := time.Now()
-	defer measureTime(totalStart, "Total execution")
+	memoryFlag := flag.Bool("memory", false, "Show detailed memory information")
+	flag.Parse()
 
-	fmt.Println("ADB Info Tool")
-	fmt.Println("=============")
-
-	deviceStart := time.Now()
 	devices := getConnectedDevices()
 	selectedDevice := selectDevice(devices)
-	measureTime(deviceStart, "Device selection")
 
-	fmt.Printf("Checking connection to device %s...\n", selectedDevice)
-	connectStart := time.Now()
-	err := checkDeviceConnectivity(selectedDevice, 5*time.Second)
-	if err != nil {
-		fmt.Printf("Error: %v\n", err)
-		fmt.Println("Please ensure the device is properly connected and try again.")
-		os.Exit(1)
+	if *memoryFlag {
+		fmt.Print(getDetailedMemoryInfo(selectedDevice))
+		return
 	}
-	measureTime(connectStart, "Connection check")
 
-	fmt.Printf("Fetching device information for %s...\n", selectedDevice)
-	infoStart := time.Now()
-	info := getDeviceInfo(selectedDevice)
-	measureTime(infoStart, "Information fetching")
+	// If no flag is provided, show menu for information selection
+	showInformationMenu(selectedDevice)
+}
 
-	outputStart := time.Now()
-	fmt.Print(formatOutput(info))
-	measureTime(outputStart, "Output formatting")
+func showInformationMenu(deviceID string) {
+	for {
+		fmt.Println("\nWhat information would you like to see?")
+		fmt.Println("1. General Device Information")
+		fmt.Println("2. Detailed Memory Information")
+		fmt.Println("3. Exit")
+
+		reader := bufio.NewReader(os.Stdin)
+		fmt.Print("Enter your choice (1-3): ")
+		input, _ := reader.ReadString('\n')
+		input = strings.TrimSpace(input)
+
+		switch input {
+		case "1":
+			info := getDeviceInfo(deviceID)
+			fmt.Print(formatOutput(info))
+		case "2":
+			fmt.Print(getDetailedMemoryInfo(deviceID))
+		case "3":
+			fmt.Println("Exiting. Goodbye!")
+			return
+		default:
+			fmt.Println("Invalid choice. Please try again.")
+		}
+	}
 }
