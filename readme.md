@@ -1,13 +1,11 @@
 # Build
 
-For linux, MacOS
-
 ```
-go build -o adb-info
+./build.sh
 ```
 
-For Windows
+# Usage
 
 ```
-GOOS=windows GOARCH=amd64 go build -o adb-info.exe
+./adbctl
 ```

@@ -327,6 +327,7 @@ func contains(fields []struct{ key, description string }, key string) bool {
 }
 
 func main() {
+	fmt.Println("Welcome to abdctl - Your Android Device Management Companion")
 	memoryFlag := flag.Bool("memory", false, "Show detailed memory information")
 	flag.Parse()
 
