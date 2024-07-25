@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/fatih/color"
 )
 
 type DeviceInfo struct {
@@ -157,32 +159,79 @@ func getDeviceInfo(deviceID string) []DeviceInfo {
 		{"Screen Resolution", runAdbCommand(deviceID, "wm size", timeout)},
 		{"Screen Density", runAdbCommand(deviceID, "wm density", timeout)},
 		{"Battery Level", runAdbCommand(deviceID, "dumpsys battery | grep level | awk '{print $2}'", timeout)},
-	}
-
-	manufacturer := runAdbCommand(deviceID, "getprop ro.product.manufacturer", timeout)
-	if strings.ToLower(manufacturer) == "amazon" {
-		info = append(info, DeviceInfo{"Fire OS Version", runAdbCommand(deviceID, "getprop ro.build.version.name", timeout)})
-		info = append(info, DeviceInfo{"Fire OS Build Number", runAdbCommand(deviceID, "getprop ro.build.version.number", timeout)})
+		{"Fire OS Version", runAdbCommand(deviceID, "getprop ro.build.version.name", timeout)},
+		{"Fire OS Build Number", runAdbCommand(deviceID, "getprop ro.build.version.number", timeout)},
 	}
 
 	return info
 }
 
 func formatOutput(info []DeviceInfo) string {
-	var maxLength int
-	for _, item := range info {
-		if len(item.Property) > maxLength {
-			maxLength = len(item.Property)
-		}
+	var output strings.Builder
+	maxWidth := 70 // Adjust this value to fit your terminal width
+
+	// Title
+	color.New(color.FgCyan, color.Bold).Fprintln(&output, "Device Information")
+	output.WriteString(strings.Repeat("=", maxWidth) + "\n\n")
+
+	// Group information
+	groups := map[string][]string{
+		"Device": {
+			"Model", "Manufacturer", "Android Version", "API Level",
+			"Build Number", "Fire OS Version", "Fire OS Build Number",
+		},
+		"Hardware": {
+			"CPU", "CPU ABI", "Memory", "Storage", "Free Storage",
+		},
+		"Display": {
+			"Screen Resolution", "Screen Density",
+		},
+		"Other": {
+			"Battery Level",
+		},
 	}
 
-	var output strings.Builder
-	output.WriteString("Device Information:\n")
-	output.WriteString(strings.Repeat("=", 20) + "\n")
-	for _, item := range info {
-		output.WriteString(fmt.Sprintf("%-*s : %s\n", maxLength, item.Property, item.Value))
+	for groupName, properties := range groups {
+		color.New(color.FgYellow, color.Bold).Fprintf(&output, "[ %s ]\n", groupName)
+		for _, property := range properties {
+			for _, item := range info {
+				if item.Property == property {
+					icon := getIcon(property)
+					color.New(color.FgGreen).Fprintf(&output, "%-3s %-20s : ", icon, property)
+					color.New(color.FgWhite).Fprintln(&output, item.Value)
+					break
+				}
+			}
+		}
+		output.WriteString("\n")
 	}
+
 	return output.String()
+}
+
+func getIcon(property string) string {
+	icons := map[string]string{
+		"Model":                "📱",
+		"Manufacturer":         "🏭",
+		"Android Version":      "🤖",
+		"API Level":            "🔢",
+		"Build Number":         "🏗️",
+		"Fire OS Version":      "🔥",
+		"Fire OS Build Number": "🔥",
+		"CPU":                  "💻",
+		"CPU ABI":              "🧮",
+		"Memory":               "💾",
+		"Storage":              "💽",
+		"Free Storage":         "🆓",
+		"Screen Resolution":    "📺",
+		"Screen Density":       "🔍",
+		"Battery Level":        "🔋",
+	}
+
+	if icon, ok := icons[property]; ok {
+		return icon
+	}
+	return "  "
 }
 
 func measureTime(start time.Time, name string) {
