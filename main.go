@@ -344,13 +344,16 @@ func main() {
 
 func showInformationMenu(deviceID string) {
 	for {
-		fmt.Println("\nWhat information would you like to see?")
-		fmt.Println("1. General Device Information")
-		fmt.Println("2. Detailed Memory Information")
-		fmt.Println("3. Exit")
+		fmt.Println("\nWhat action would you like to perform?")
+		fmt.Println("1. Show General Device Information")
+		fmt.Println("2. Show Detailed Memory Information")
+		fmt.Println("3. Reboot Device")
+		fmt.Println("4. Start Application")
+		fmt.Println("5. List Installed Applications")
+		fmt.Println("6. Exit")
 
 		reader := bufio.NewReader(os.Stdin)
-		fmt.Print("Enter your choice (1-3): ")
+		fmt.Print("Enter your choice (1-6): ")
 		input, _ := reader.ReadString('\n')
 		input = strings.TrimSpace(input)
 
@@ -361,10 +364,60 @@ func showInformationMenu(deviceID string) {
 		case "2":
 			fmt.Print(getDetailedMemoryInfo(deviceID))
 		case "3":
+			rebootDevice(deviceID)
+		case "4":
+			startApplication(deviceID)
+		case "5":
+			listInstalledApps(deviceID)
+		case "6":
 			fmt.Println("Exiting. Goodbye!")
 			return
 		default:
 			fmt.Println("Invalid choice. Please try again.")
+		}
+	}
+}
+
+func rebootDevice(deviceID string) {
+	fmt.Println("Rebooting device...")
+	cmd := exec.Command("adb", "-s", deviceID, "reboot")
+	err := cmd.Run()
+	if err != nil {
+		fmt.Printf("Error rebooting device: %v\n", err)
+	} else {
+		fmt.Println("Device is rebooting. Please wait...")
+	}
+}
+
+func startApplication(deviceID string) {
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Print("Enter the package name of the application to start: ")
+	packageName, _ := reader.ReadString('\n')
+	packageName = strings.TrimSpace(packageName)
+
+	cmd := exec.Command("adb", "-s", deviceID, "shell", "monkey", "-p", packageName, "-c", "android.intent.category.LAUNCHER", "1")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		fmt.Printf("Error starting application: %v\n", err)
+		fmt.Println(string(output))
+	} else {
+		fmt.Printf("Application %s started successfully.\n", packageName)
+	}
+}
+
+func listInstalledApps(deviceID string) {
+	cmd := exec.Command("adb", "-s", deviceID, "shell", "pm", "list", "packages")
+	output, err := cmd.Output()
+	if err != nil {
+		fmt.Printf("Error listing installed applications: %v\n", err)
+		return
+	}
+
+	fmt.Println("Installed Applications:")
+	apps := strings.Split(string(output), "\n")
+	for _, app := range apps {
+		if strings.TrimSpace(app) != "" {
+			fmt.Println(strings.TrimPrefix(app, "package:"))
 		}
 	}
 }
