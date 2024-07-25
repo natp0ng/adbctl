@@ -16,30 +16,29 @@ type DeviceInfo struct {
 	Value    string
 }
 
-func runAdbCommandWithTimeout(deviceID, command string, timeout time.Duration) string {
+var isDebug bool
+
+func init() {
+	isDebug = os.Getenv("DEBUG") != ""
+}
+
+func debugPrint(format string, a ...interface{}) {
+	if isDebug {
+		fmt.Printf(format, a...)
+	}
+}
+
+func runAdbCommand(deviceID, command string, timeout time.Duration) string {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	var cmd *exec.Cmd
-	if deviceID != "" {
-		cmd = exec.CommandContext(ctx, "adb", "-s", deviceID, "shell", command)
-	} else {
-		cmd = exec.CommandContext(ctx, "adb", "shell", command)
-	}
-
-	output, err := cmd.Output()
+	cmd := exec.CommandContext(ctx, "adb", "-s", deviceID, "shell", command)
+	output, err := cmd.CombinedOutput()
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return "Error: Command timed out"
-		}
+		debugPrint("Error executing command '%s': %v\n", command, err)
 		return "n/a"
 	}
-
-	result := strings.TrimSpace(string(output))
-	if result == "" {
-		return "n/a"
-	}
-	return result
+	return strings.TrimSpace(string(output))
 }
 
 func getConnectedDevices() []string {
@@ -105,15 +104,7 @@ func checkDeviceConnectivity(deviceID string, timeout time.Duration) error {
 	return nil
 }
 
-func formatMemory(totalKB, usedKB, freeKB int) string {
-	totalGB := float64(totalKB) / 1048576.0
-	usedGB := float64(usedKB) / 1048576.0
-	freeGB := float64(freeKB) / 1048576.0
-	return fmt.Sprintf("%.2f GB / %d kB (%.2f GB used, %.2f GB free)", totalGB, totalKB, usedGB, freeGB)
-}
-
-func getMemoryInfo(deviceID string, timeout time.Duration) string {
-	meminfo := runAdbCommandWithTimeout(deviceID, "cat /proc/meminfo", timeout)
+func parseMemInfo(meminfo string) string {
 	lines := strings.Split(meminfo, "\n")
 	var totalKB, freeKB, availableKB int
 	for _, line := range lines {
@@ -126,11 +117,13 @@ func getMemoryInfo(deviceID string, timeout time.Duration) string {
 		}
 	}
 	usedKB := totalKB - availableKB
-	return formatMemory(totalKB, usedKB, freeKB)
+	totalGB := float64(totalKB) / 1048576.0
+	usedGB := float64(usedKB) / 1048576.0
+	freeGB := float64(freeKB) / 1048576.0
+	return fmt.Sprintf("%.2f GB / %d kB (%.2f GB used, %.2f GB free)", totalGB, totalKB, usedGB, freeGB)
 }
 
-func getCPUInfo(deviceID string, timeout time.Duration) string {
-	cpuinfo := runAdbCommandWithTimeout(deviceID, "cat /proc/cpuinfo", timeout)
+func parseCPUInfo(cpuinfo, cpuUsage string) string {
 	lines := strings.Split(cpuinfo, "\n")
 	var totalCores int
 	for _, line := range lines {
@@ -139,8 +132,6 @@ func getCPUInfo(deviceID string, timeout time.Duration) string {
 		}
 	}
 
-	// Get CPU usage (this is an approximation)
-	cpuUsage := runAdbCommandWithTimeout(deviceID, "top -n 1 | grep 'CPU:'", timeout)
 	usageFields := strings.Fields(cpuUsage)
 	var usedCPU float64
 	if len(usageFields) >= 4 {
@@ -150,36 +141,28 @@ func getCPUInfo(deviceID string, timeout time.Duration) string {
 	return fmt.Sprintf("%d cores (%.2f%% used)", totalCores, usedCPU)
 }
 
-func getFireOSInfo(deviceID string, timeout time.Duration) (string, string) {
-	fireOSVersion := runAdbCommandWithTimeout(deviceID, "getprop ro.build.version.name", timeout)
-	fireOSBuildNumber := runAdbCommandWithTimeout(deviceID, "getprop ro.build.version.number", timeout)
-	return fireOSVersion, fireOSBuildNumber
-}
-
 func getDeviceInfo(deviceID string) []DeviceInfo {
 	timeout := 5 * time.Second
 	info := []DeviceInfo{
-		{"Model", runAdbCommandWithTimeout(deviceID, "getprop ro.product.model", timeout)},
-		{"Android Version", runAdbCommandWithTimeout(deviceID, "getprop ro.build.version.release", timeout)},
-		{"API Level", runAdbCommandWithTimeout(deviceID, "getprop ro.build.version.sdk", timeout)},
-		{"CPU ABI", runAdbCommandWithTimeout(deviceID, "getprop ro.product.cpu.abi", timeout)},
-		{"Manufacturer", runAdbCommandWithTimeout(deviceID, "getprop ro.product.manufacturer", timeout)},
-		{"Build Number", runAdbCommandWithTimeout(deviceID, "getprop ro.build.display.id", timeout)},
-		{"Memory", getMemoryInfo(deviceID, timeout)},
-		{"CPU", getCPUInfo(deviceID, timeout)},
-		{"Storage", runAdbCommandWithTimeout(deviceID, "df -h /data | tail -n 1 | awk '{print $2}'", timeout)},
-		{"Free Storage", runAdbCommandWithTimeout(deviceID, "df -h /data | tail -n 1 | awk '{print $4}'", timeout)},
-		{"Screen Resolution", runAdbCommandWithTimeout(deviceID, "wm size", timeout)},
-		{"Screen Density", runAdbCommandWithTimeout(deviceID, "wm density", timeout)},
-		{"Battery Level", runAdbCommandWithTimeout(deviceID, "dumpsys battery | grep level | awk '{print $2}'", timeout)},
+		{"Model", runAdbCommand(deviceID, "getprop ro.product.model", timeout)},
+		{"Android Version", runAdbCommand(deviceID, "getprop ro.build.version.release", timeout)},
+		{"API Level", runAdbCommand(deviceID, "getprop ro.build.version.sdk", timeout)},
+		{"CPU ABI", runAdbCommand(deviceID, "getprop ro.product.cpu.abi", timeout)},
+		{"Manufacturer", runAdbCommand(deviceID, "getprop ro.product.manufacturer", timeout)},
+		{"Build Number", runAdbCommand(deviceID, "getprop ro.build.display.id", timeout)},
+		{"Memory", parseMemInfo(runAdbCommand(deviceID, "cat /proc/meminfo", timeout))},
+		{"CPU", parseCPUInfo(runAdbCommand(deviceID, "cat /proc/cpuinfo", timeout), runAdbCommand(deviceID, "top -n 1 | grep 'CPU:'", timeout))},
+		{"Storage", runAdbCommand(deviceID, "df -h /data | tail -n 1 | awk '{print $2}'", timeout)},
+		{"Free Storage", runAdbCommand(deviceID, "df -h /data | tail -n 1 | awk '{print $4}'", timeout)},
+		{"Screen Resolution", runAdbCommand(deviceID, "wm size", timeout)},
+		{"Screen Density", runAdbCommand(deviceID, "wm density", timeout)},
+		{"Battery Level", runAdbCommand(deviceID, "dumpsys battery | grep level | awk '{print $2}'", timeout)},
 	}
 
-	// Check if the device is an Amazon device
-	manufacturer := runAdbCommandWithTimeout(deviceID, "getprop ro.product.manufacturer", timeout)
+	manufacturer := runAdbCommand(deviceID, "getprop ro.product.manufacturer", timeout)
 	if strings.ToLower(manufacturer) == "amazon" {
-		fireOSVersion, fireOSBuildNumber := getFireOSInfo(deviceID, timeout)
-		info = append(info, DeviceInfo{"Fire OS Version", fireOSVersion})
-		info = append(info, DeviceInfo{"Fire OS Build Number", fireOSBuildNumber})
+		info = append(info, DeviceInfo{"Fire OS Version", runAdbCommand(deviceID, "getprop ro.build.version.name", timeout)})
+		info = append(info, DeviceInfo{"Fire OS Build Number", runAdbCommand(deviceID, "getprop ro.build.version.number", timeout)})
 	}
 
 	return info
@@ -202,19 +185,39 @@ func formatOutput(info []DeviceInfo) string {
 	return output.String()
 }
 
+func measureTime(start time.Time, name string) {
+	elapsed := time.Since(start)
+	fmt.Printf("%s took %s\n", name, elapsed)
+}
+
 func main() {
+	totalStart := time.Now()
+	defer measureTime(totalStart, "Total execution")
+
+	fmt.Println("ADB Info Tool")
+	fmt.Println("=============")
+
+	deviceStart := time.Now()
 	devices := getConnectedDevices()
 	selectedDevice := selectDevice(devices)
+	measureTime(deviceStart, "Device selection")
 
 	fmt.Printf("Checking connection to device %s...\n", selectedDevice)
+	connectStart := time.Now()
 	err := checkDeviceConnectivity(selectedDevice, 5*time.Second)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		fmt.Println("Please ensure the device is properly connected and try again.")
 		os.Exit(1)
 	}
+	measureTime(connectStart, "Connection check")
 
 	fmt.Printf("Fetching device information for %s...\n", selectedDevice)
+	infoStart := time.Now()
 	info := getDeviceInfo(selectedDevice)
+	measureTime(infoStart, "Information fetching")
+
+	outputStart := time.Now()
 	fmt.Print(formatOutput(info))
+	measureTime(outputStart, "Output formatting")
 }
