@@ -20,9 +20,12 @@ type DeviceInfo struct {
 }
 
 var isDebug bool
+var showIcons bool
 
 func init() {
 	isDebug = os.Getenv("DEBUG") != ""
+	//showIcons = os.Getenv("SHOW_ICONS") != "false"
+	showIcons = false
 }
 
 func debugPrint(format string, a ...interface{}) {
@@ -45,7 +48,7 @@ func runAdbCommand(deviceID, command string, timeout time.Duration) string {
 }
 
 func getConnectedDevices() []string {
-	cmd := exec.Command("adb", "devices")
+	cmd := exec.Command("adb", "devices", "-l")
 	output, err := cmd.Output()
 	if err != nil {
 		fmt.Println("Error running adb devices:", err)
@@ -56,7 +59,10 @@ func getConnectedDevices() []string {
 	var devices []string
 	for _, line := range lines[1:] { // Skip the first line (header)
 		if strings.TrimSpace(line) != "" && !strings.HasSuffix(line, "offline") {
-			devices = append(devices, strings.Fields(line)[0])
+			deviceInfo := strings.Fields(line)
+			if len(deviceInfo) > 0 {
+				devices = append(devices, line)
+			}
 		}
 	}
 	return devices
@@ -70,7 +76,7 @@ func selectDevice(devices []string) string {
 		os.Exit(1)
 	}
 	if len(devices) == 1 {
-		return devices[0]
+		return strings.Fields(devices[0])[0]
 	}
 
 	fmt.Println("Multiple devices found. Please select a device:")
@@ -86,7 +92,7 @@ func selectDevice(devices []string) string {
 		index := 0
 		_, err := fmt.Sscanf(input, "%d", &index)
 		if err == nil && index > 0 && index <= len(devices) {
-			return devices[index-1]
+			return strings.Fields(devices[index-1])[0]
 		}
 		fmt.Println("Invalid selection. Please try again.")
 	}
@@ -144,24 +150,125 @@ func parseCPUInfo(cpuinfo, cpuUsage string) string {
 	return fmt.Sprintf("%d cores (%.2f%% used)", totalCores, usedCPU)
 }
 
+func parseStorageInfo(dfOutput string) string {
+	lines := strings.Split(dfOutput, "\n")
+	if len(lines) < 2 {
+		return "n/a"
+	}
+
+	fields := strings.Fields(lines[1])
+	if len(fields) < 4 {
+		return "n/a"
+	}
+
+	totalKB, _ := strconv.Atoi(fields[1])
+	usedKB, _ := strconv.Atoi(fields[2])
+	freeKB, _ := strconv.Atoi(fields[3])
+
+	totalGB := float64(totalKB) / 1048576.0
+	usedGB := float64(usedKB) / 1048576.0
+	freeGB := float64(freeKB) / 1048576.0
+
+	return fmt.Sprintf("%.2f GB / %d kB (%.2f GB used, %.2f GB free)", totalGB, totalKB, usedGB, freeGB)
+}
+
+func mapCPUABI(abi string) string {
+	mapping := map[string]string{
+		"armeabi":     "ARM EABI (32-bit)",
+		"armeabi-v7a": "ARM EABI v7a (32-bit, with hardware floating-point support)",
+		"arm64-v8a":   "ARM 64-bit (v8a)",
+		"x86":         "Intel x86 (32-bit)",
+		"x86_64":      "Intel x86_64 (64-bit)",
+		"mips":        "MIPS (32-bit)",
+		"mips64":      "MIPS 64-bit",
+	}
+
+	if humanReadable, ok := mapping[abi]; ok {
+		return humanReadable
+	}
+	return abi
+}
+
+func mapFireOSModel(model string) string {
+	mapping := map[string]struct {
+		Name string
+		Link string
+	}{
+		"AFTTOR001":   {"Panasonic OLED TV VIERA with Fire TV integration (2024)", "https://developer.amazon.com/docs/fire-tv/device-specifications-fire-tv-edition-smart-tv.html?v=panasonic_fire_tv_2024_jp"},
+		"AFTWYM01":    {"Panasonic OLED TV VIERA with Fire TV integration (2024)", "https://developer.amazon.com/docs/fire-tv/device-specifications-fire-tv-edition-smart-tv.html?v=panasonic_fire_tv_2024_jp"},
+		"AFTGOLDFF":   {"Panasonic Fire TV (2024)", "https://developer.amazon.com/docs/fire-tv/device-specifications-fire-tv-edition-smart-tv-emea.html?v=ftvedition_panasonic4k"},
+		"AFTDEC012E":  {"Fire TV - TCL S4/S5/Q5/Q6 Series 4K UHD HDR LED (2024)", "https://developer.amazon.com/docs/fire-tv/device-specifications-fire-tv-edition-smart-tv.html?v=tcl_s4s5q5q6_2024"},
+		"AFTBTX4":     {"Redmi 108cm (43 inches) 4K Ultra HD smart LED Fire TV (2023)", "https://developer.amazon.com/docs/fire-tv/device-specifications-fire-tv-edition-smart-tv.html?v=redmi_108_f_4k_uhd_2023"},
+		"AFTMD002":    {"TCL Class S3 1080p LED Smart TV with Fire TV (2023)", "https://developer.amazon.com/docs/fire-tv/device-specifications-fire-tv-edition-smart-tv.html?v=tclclass_s3_1080_2023"},
+		"AFTKRT":      {"Fire TV Stick 4K Max - 2nd Gen (2023) - 16 GB", "https://developer.amazon.com/docs/fire-tv/device-specifications-fire-tv-stick.html?v=ftvstick4kmax_gen2_16"},
+		"AFTKM":       {"Fire TV Stick 4K - 2nd Gen (2023) - 8 GB", "https://developer.amazon.com/docs/fire-tv/device-specifications-fire-tv-stick.html?v=ftvstick4k_gen2_8"},
+		"AFTSHN02":    {"TCL 32\" FHD, 40\" FHD Fire TV (2023)", "https://developer.amazon.com/docs/fire-tv/device-specifications-fire-tv-edition-smart-tv.html?v=tclsmart_fhd__led_2023"},
+		"AFTMD001":    {"Fire TV - TCL S4 Series 4K UHD HDR LED (2023)", "https://developer.amazon.com/docs/fire-tv/device-specifications-fire-tv-edition-smart-tv.html?v=tclsseries_4K_2023"},
+		"AFTKA002":    {"Fire TV 2-Series (2023)", "https://developer.amazon.com/docs/fire-tv/device-specifications-fire-tv-edition-smart-tv.html?v=2series2023"},
+		"AFTKAUK002":  {"Fire TV 2-Series (2023)", "https://developer.amazon.com/docs/fire-tv/device-specifications-fire-tv-edition-smart-tv.html?v=2series2023"},
+		"AFTHA004":    {"Toshiba 4K UHD - Fire TV (2022)", "https://developer.amazon.com/docs/fire-tv/device-specifications-fire-tv-edition-smart-tv.html?v=toshiba4k2022"},
+		"AFTLBT962E2": {"BMW (2022)", "https://developer.amazon.com/docs/fire-tv/device-specifications-automotive.html?v=BMW2022"},
+		"AEOHY":       {"Echo Show 15 (2021)", "https://developer.amazon.com/docs/fire-tv/device-specifications-echo-show.html?v=echoshow2021"},
+		"AFTTIFF43":   {"Fire TV Omni QLED Series (2022)", "https://developer.amazon.com/docs/fire-tv/device-specifications-fire-tv-edition-smart-tv.html?v=omniseries2"},
+		"AFTGAZL":     {"Fire TV Cube - 3rd Gen (2022)", "https://developer.amazon.com/docs/fire-tv/device-specifications-fire-tv-cube.html?v=ftvcubegen3"},
+		"AFTANNA0":    {"Xiaomi F2 4K - Fire TV (2022)", "https://developer.amazon.com/docs/fire-tv/device-specifications-fire-tv-edition-smart-tv.html?v=firetvedition_xiaomi2022"},
+		"AFTHA001":    {"Hisense U6 4K UHD - Fire TV (2022)", "https://developer.amazon.com/docs/fire-tv/device-specifications-fire-tv-edition-smart-tv.html?v=firetvedition_hisense4k"},
+		"AFTMON001":   {"Funai 4K - Fire TV (2022)", "https://developer.amazon.com/docs/fire-tv/device-specifications-fire-tv-edition-smart-tv.html?v=firetvedition_funai4k2022"},
+		"AFTMON002":   {"Funai 4K - Fire TV (2022)", "https://developer.amazon.com/docs/fire-tv/device-specifications-fire-tv-edition-smart-tv.html?v=firetvedition_funai4k2022"},
+		"AFTJULI1":    {"JVC 4K - Fire TV with Freeview Play (2021)", "https://developer.amazon.com/docs/fire-tv/device-specifications-fire-tv-edition-smart-tv.html?v=firetvedition_jvc4kfp"},
+		"AFTWMST22":   {"JVC 2K - Fire TV (2020)", "https://developer.amazon.com/docs/fire-tv/device-specifications-fire-tv-edition-smart-tv.html?v=firetveditionuk_jvc2"},
+		"AFTTIFF55":   {"Onida HD/FHD - Fire TV (2020)", "https://developer.amazon.com/docs/fire-tv/device-specifications-fire-tv-edition-smart-tv.html?v=ftveditionin_onidahd2020"},
+		"AFTWI001":    {"ok 4K - Fire TV (2020)", "https://developer.amazon.com/docs/fire-tv/device-specifications-fire-tv-edition-smart-tv.html?v=ftveditionde_ok4k"},
+		"AFTSSS":      {"Fire TV Stick - 3rd Gen (2020)", "https://developer.amazon.com/docs/fire-tv/device-specifications-fire-tv-stick.html?v=ftvstickgen3"},
+		"AFTSS":       {"Fire TV Stick Lite - 1st Gen (2020)", "https://developer.amazon.com/docs/fire-tv/device-specifications-fire-tv-stick.html?v=ftvsticklite"},
+		"AFTDCT31":    {"Toshiba 4K UHD - Fire TV (2020)", "https://developer.amazon.com/docs/fire-tv/device-specifications-fire-tv-edition-smart-tv.html?v=ftveditiontoshiba4k_2020"},
+		"AFTPR001":    {"AmazonBasics 4K - Fire TV (2020)", "https://developer.amazon.com/docs/fire-tv/device-specifications-fire-tv-edition-smart-tv.html?v=ftveditionin_amazonbasics4k"},
+		"AFTBU001":    {"AmazonBasics HD/FHD - Fire TV (2020)", "https://developer.amazon.com/docs/fire-tv/device-specifications-fire-tv-edition-smart-tv.html?v=ftveditionin_amazonbasics2k"},
+		"AFTLE":       {"Onida HD - Fire TV (2019)", "https://developer.amazon.com/docs/fire-tv/device-specifications-fire-tv-edition-smart-tv.html?v=ftveditionin_onidahd"},
+		"AFTR":        {"Fire TV Cube - 2nd Gen (2019)", "https://developer.amazon.com/docs/fire-tv/device-specifications-fire-tv-cube.html?v=ftvcubegen2"},
+		"AFTEUFF014":  {"Grundig OLED 4K - Fire TV (2019)", "https://developer.amazon.com/docs/fire-tv/device-specifications-fire-tv-edition-smart-tv.html?v=ftveditionde_grundigoled"},
+		"AFTEU014":    {"Grundig Vision 7, 4K - Fire TV (2019)", "https://developer.amazon.com/docs/fire-tv/device-specifications-fire-tv-edition-smart-tv.html?v=ftveditionde_grundigvision7"},
+		"AFTSO001":    {"JVC 4K - Fire TV (2019)", "https://developer.amazon.com/docs/fire-tv/device-specifications-fire-tv-edition-smart-tv.html?v=ftveditionuk_jvc4k"},
+		// "AFTMM":       {"Nebula Soundbar - Fire TV Edition (2019)", "https://developer.amazon.com/docs/fire-tv/device-specifications-fire-tv-edition-soundbar.html?v=ftvedition_nebula"},
+		"AFTEU011":  {"Grundig Vision 6 HD - Fire TV (2019)", "https://developer.amazon.com/docs/fire-tv/device-specifications-fire-tv-edition-smart-tv.html?v=ftveditionde_grundigvision6"},
+		"AFTJMST12": {"Insignia 4K - Fire TV (2018)", "https://developer.amazon.com/docs/fire-tv/device-specifications-fire-tv-edition-smart-tv.html?v=ftveditioninsignia4k"},
+		"AFTA":      {"Fire TV Cube - 1st Gen (2018)", "https://developer.amazon.com/docs/fire-tv/device-specifications-fire-tv-cube.html?v=ftvcubegen1"},
+		"AFTMM":     {"Fire TV Stick 4K - 1st Gen (2018)", "https://developer.amazon.com/docs/fire-tv/device-specifications-fire-tv-stick.html?v=ftvstick4k"},
+		"AFTT":      {"Fire TV Stick - Basic Edition (2017)", "https://developer.amazon.com/docs/fire-tv/device-specifications-fire-tv-stick.html?v=ftvstickbasicedition"},
+		"AFTRS":     {"Element 4K - Fire TV (2017)", "https://developer.amazon.com/docs/fire-tv/device-specifications-fire-tv-edition-smart-tv.html?v=ftveditionelement"},
+		"AFTN":      {"Fire TV - 3rd Gen (2017)", "https://developer.amazon.com/docs/fire-tv/device-specifications-fire-tv-pendant-box.html?v=ftvgen3"},
+		"AFTS":      {"Fire TV - 2nd Gen (2015)", "https://developer.amazon.com/docs/fire-tv/device-specifications-fire-tv-pendant-box.html?v=ftvgen2"},
+		"AFTM":      {"Fire TV Stick - 1st Gen (2014)", "https://developer.amazon.com/docs/fire-tv/device-specifications-fire-tv-stick.html?v=ftvstickgen1"},
+		"AFTB":      {"Fire TV - 1st Gen (2014)", "https://developer.amazon.com/docs/fire-tv/device-specifications-fire-tv-pendant-box.html?v=ftvgen1"},
+		// "AFTMM":       {"TCL Soundbar with Built-in Subwoofer - Fire TV Edition (2019)", "https://developer.amazon.com/docs/fire-tv/device-specifications-fire-tv-edition-soundbar.html?v=ftvedition_tcl"},
+		"AFTHA002": {"Toshiba V35 Series LED FHD/HD - Fire TV (2021)", "https://developer.amazon.com/docs/fire-tv/device-specifications-fire-tv-edition-smart-tv.html?v=firetvedition_toshibav35"},
+	}
+
+	if realName, ok := mapping[model]; ok {
+		return fmt.Sprintf("%s (%s)", realName.Name, realName.Link)
+	}
+	return model
+}
+
 func getDeviceInfo(deviceID string) []DeviceInfo {
 	timeout := 5 * time.Second
 	info := []DeviceInfo{
-		{"Model", runAdbCommand(deviceID, "getprop ro.product.model", timeout)},
+		{"Model", mapFireOSModel(runAdbCommand(deviceID, "getprop ro.product.model", timeout))},
 		{"Android Version", runAdbCommand(deviceID, "getprop ro.build.version.release", timeout)},
 		{"API Level", runAdbCommand(deviceID, "getprop ro.build.version.sdk", timeout)},
-		{"CPU ABI", runAdbCommand(deviceID, "getprop ro.product.cpu.abi", timeout)},
+		{"CPU ABI", mapCPUABI(runAdbCommand(deviceID, "getprop ro.product.cpu.abi", timeout))},
 		{"Manufacturer", runAdbCommand(deviceID, "getprop ro.product.manufacturer", timeout)},
 		{"Build Number", runAdbCommand(deviceID, "getprop ro.build.display.id", timeout)},
 		{"Memory", parseMemInfo(runAdbCommand(deviceID, "cat /proc/meminfo", timeout))},
 		{"CPU", parseCPUInfo(runAdbCommand(deviceID, "cat /proc/cpuinfo", timeout), runAdbCommand(deviceID, "top -n 1 | grep 'CPU:'", timeout))},
-		{"Storage", runAdbCommand(deviceID, "df -h /data | tail -n 1 | awk '{print $2}'", timeout)},
-		{"Free Storage", runAdbCommand(deviceID, "df -h /data | tail -n 1 | awk '{print $4}'", timeout)},
+		{"Storage", parseStorageInfo(runAdbCommand(deviceID, "df -k /data", timeout))},
 		{"Screen Resolution", runAdbCommand(deviceID, "wm size", timeout)},
 		{"Screen Density", runAdbCommand(deviceID, "wm density", timeout)},
 		{"Battery Level", runAdbCommand(deviceID, "dumpsys battery | grep level | awk '{print $2}'", timeout)},
 		{"Fire OS Version", runAdbCommand(deviceID, "getprop ro.build.version.name", timeout)},
 		{"Fire OS Build Number", runAdbCommand(deviceID, "getprop ro.build.version.number", timeout)},
+		{"IP Address", runAdbCommand(deviceID, "ip addr show wlan0 | grep 'inet ' | awk '{print $2}' | cut -d/ -f1", timeout)},
+		{"WiFi SSID", runAdbCommand(deviceID, "dumpsys wifi | grep 'mWifiInfo' | grep -o 'SSID:.*' | awk -F', ' '{print $1}' | sed 's/SSID: //'", timeout)},
 	}
 
 	return info
@@ -180,6 +287,7 @@ func formatOutput(info []DeviceInfo) string {
 		"Device": {
 			"Model", "Manufacturer", "Android Version", "API Level",
 			"Build Number", "Fire OS Version", "Fire OS Build Number",
+			"IP Address", "WiFi SSID",
 		},
 		"Hardware": {
 			"CPU", "CPU ABI", "Memory", "Storage", "Free Storage",
@@ -211,6 +319,9 @@ func formatOutput(info []DeviceInfo) string {
 }
 
 func getIcon(property string) string {
+	if !showIcons {
+		return "  "
+	}
 	icons := map[string]string{
 		"Model":                "📱",
 		"Manufacturer":         "🏭",
@@ -326,23 +437,6 @@ func contains(fields []struct{ key, description string }, key string) bool {
 	return false
 }
 
-func main() {
-	fmt.Println("Welcome to abdctl - Your Android Device Management Companion")
-	memoryFlag := flag.Bool("memory", false, "Show detailed memory information")
-	flag.Parse()
-
-	devices := getConnectedDevices()
-	selectedDevice := selectDevice(devices)
-
-	if *memoryFlag {
-		fmt.Print(getDetailedMemoryInfo(selectedDevice))
-		return
-	}
-
-	// If no flag is provided, show menu for information selection
-	showInformationMenu(selectedDevice)
-}
-
 func showInformationMenu(deviceID string) {
 	for {
 		fmt.Println("\nWhat action would you like to perform?")
@@ -421,4 +515,21 @@ func listInstalledApps(deviceID string) {
 			fmt.Println(strings.TrimPrefix(app, "package:"))
 		}
 	}
+}
+
+func main() {
+	fmt.Println("Welcome to abdctl - Your Android Device Management Companion")
+	memoryFlag := flag.Bool("memory", false, "Show detailed memory information")
+	flag.Parse()
+
+	devices := getConnectedDevices()
+	selectedDevice := selectDevice(devices)
+
+	if *memoryFlag {
+		fmt.Print(getDetailedMemoryInfo(selectedDevice))
+		return
+	}
+
+	// If no flag is provided, show menu for information selection
+	showInformationMenu(selectedDevice)
 }

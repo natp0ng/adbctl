@@ -26,7 +26,7 @@ do
     IFS='/' read -r -a array <<< "$PLATFORM"
     GOOS=${array[0]}
     GOARCH=${array[1]}
-    
+
     # Set the output binary name
     if [ $GOOS = "windows" ]; then
         OUTPUT_NAME=$APP_NAME'_'$VERSION'_'$GOOS'_'$GOARCH'.exe'
